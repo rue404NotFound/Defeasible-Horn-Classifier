@@ -1,8 +1,8 @@
 # Defeasible Horn Classifier with Exceptions
-## DHCE
+
 This work implements the DHCE classifier using ASP. It then compares performance against the Short Boolean Formula (SBF) baseline using 10× 50/50 train-test splits.
 
-## Files:
+## Files
 - current.lp        - DHCE logic program (the actual classifier)
 - run_dhce_cv.py    - Python script for 10×50/50 evaluation with grid search
 - data.lp           - Boolean dataset (attribute 10 is the class label)
@@ -10,14 +10,14 @@ This work implements the DHCE classifier using ASP. It then compares performance
 - requirements.txt  - Dependencies
 - runs/             - Folder for generated split files and best models (to compare with SBF)
 
-## What current.lp Does:
+## What current.lp Does
 Defines a defeasible Horn-rule classifier using ASP. It:
 - Learns `maxD` default rules, each with at most `maxBody` literals
 - Allows up to `maxE` exceptions per rule
 - Applies rules to training data and evaluates on test data
 - Outputs classification errors (`error_pp10k`, `error_test_pp10k`), rule bodies, and coverage stats
 
-## How To run it manually:
+## How To run it manually
 - 'clingo current.lp data.lp --const maxD=4 --const maxE=1 --const maxBody=3' (constant values of your choice)
 - 'clingo current.lp data.lp'
 - remember you can use 'data.lp' or data-cancer.lp'. For test runs, 'data.lp' runs faster.
@@ -27,11 +27,11 @@ Output Expectation:
 - Misclassification counts and test error
 - Optimization score (overall error)
 
-## How to Run the Python Evaluation:
+## How to Run the Python Evaluation
 To evaluate DHCE across 10 splits, like SBF did run the following:
   'python run_dhce_cv.py"
 
-## This script will:
+## This script will
 - Generate 10 random 50/50 splits of the dataset (train/test)
 - Try all combinations of `maxD`, `maxE`, and `maxBody`
 - Select the best-performing model per split
@@ -39,13 +39,13 @@ To evaluate DHCE across 10 splits, like SBF did run the following:
 - Write a summary CSV file `dhce_vs_sbf.csv` with error rates and rule sizes
 Each split is evaluated independently using the ASP classifier in `current.lp`.
 
-## Expected Output:
+## Expected Output
 After running the Python script:
 - Per-split results will appear in `runs/`
 - Summary statistics (split number, test error, rule size, parameters) in `dhce_vs_sbf.csv`
 - Console will show best error per split and average test error
 
-## Requirements:
+## Requirements
 - See requirements.txt'
 
 
