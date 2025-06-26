@@ -18,7 +18,9 @@ Defines a defeasible Horn-rule classifier using ASP. It:
 - Outputs classification errors (`error_pp10k`, `error_test_pp10k`), rule bodies, and coverage stats
 
 ## How To run it manually:
-'clingo current.lp data.lp --const maxD=4 --const maxE=1 --const maxBody=3'
+- 'clingo current.lp data.lp --const maxD=4 --const maxE=1 --const maxBody=3' (constant values of your choice)
+- 'clingo current.lp data.lp'
+- remember you can use 'data.lp' or data-cancer.lp'. For test runs, 'data.lp' runs faster.
 
 Output Expectation:
 - `default_body/2` and `exception_body/3` atoms for rule interpretation
