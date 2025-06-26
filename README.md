@@ -1,4 +1,4 @@
-# DHCE:
+## DHCE
 This work implements the DHCE classifier using ASP. It then compares performance against the Short Boolean Formula (SBF) baseline using 10× 50/50 train-test splits.
 
 # Files:
