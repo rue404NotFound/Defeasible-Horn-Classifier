@@ -2,12 +2,12 @@
 This work implements the DHCE classifier using ASP. It then compares performance against the Short Boolean Formula (SBF) baseline using 10× 50/50 train-test splits.
 
 # Files:
-current.lp        - DHCE logic program (the actual classifier)
-run_dhce_cv.py    - Python script for 10×50/50 evaluation with grid search
-data.lp           - Boolean dataset (attribute 10 is the class label)
-seeds.txt         - Optional list of 10 integer seeds (one per line)(0...9)
-requirements.txt  - Dependencies
-runs/             - Folder for generated split files and best models (to compare with SBF)
+- current.lp        - DHCE logic program (the actual classifier)
+- run_dhce_cv.py    - Python script for 10×50/50 evaluation with grid search
+- data.lp           - Boolean dataset (attribute 10 is the class label)
+- seeds.txt         - Optional list of 10 integer seeds (one per line)(0...9)
+- requirements.txt  - Dependencies
+- runs/             - Folder for generated split files and best models (to compare with SBF)
 
 # What current.lp Does:
 Defines a defeasible Horn-rule classifier using ASP. It:
