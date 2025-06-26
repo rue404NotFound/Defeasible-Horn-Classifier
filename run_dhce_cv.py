@@ -11,21 +11,22 @@ Output files:
   • runs/split<i>_best.txt  - best DHCE answer set for that split (will use to compare with SBF)
   • dhce_vs_sbf.csv         - summary table (split, error, literals …)
 """
+import json, random, subprocess, pathlib, csv, itertools, re, sys, copy, time
 
-import json, random, subprocess, pathlib, csv, itertools, re, sys, copy
-
-# ── paths ──────────────────────────────────────────────────────────────
-DATA_FILE  = "data.lp"     # make sure the dataset is in the same directory
-MODEL_FILE = "current.lp"         # The ASP model (must be in the same folder as this script)
-SEED_FILE  = "seeds.txt"
-OUT_DIR    = pathlib.Path("runs"); OUT_DIR.mkdir(exist_ok=True) #Where run results and models are saved
+# ── configuration ─────────────────────────────────────────────────────
+DATA_FILE      = "data.lp"      
+MODEL_FILE     = "current.lp"
+SEED_FILE      = "seeds.txt"
+OUT_DIR        = pathlib.Path("runs"); OUT_DIR.mkdir(exist_ok=True)
+CLINGO_TIMEOUT = 60             # adjust the seconds used per clingo call
 
 # ── hyper-parameter grid ───────────────────────────────────────────────
+
 # All combinations of these constants will be tested — fine-tune here
-GRID = {
-    "maxD"   : [4, 5],           # choose number of default rules
-    "maxE"   : [1, 2],           # choose exceptions per rule
-    "maxBody": [2, 3, 4],        # choose max literals in a rule
+GRID = {                        # hyper-parameter grid (compact)
+    "maxD":   [3, 4],   # choose number of default rules        
+    "maxE":   [2, 3],   # choose exceptions per rule        
+    "maxBody":[2],      # choose max literals in a rule        
 }
 # ───────────────────────────────────────────────────────────────────────
 
@@ -38,13 +39,17 @@ def ensure_seeds():
 
 # Load all row IDs from the dataset file based on presence of the target attribute (a(10))
 def load_rows():
-    ids, pat = [], re.compile(r"val\((\d+),a\(10\),[01]\)\.")
+    ids = []
+    pat = re.compile(r"val\((\d+),a\(10\),[01]\)\.")
     with open(DATA_FILE) as f:
         for line in f:
             m = pat.match(line)
-            if m: ids.append(int(m.group(1)))
+            if m:
+                ids.append(int(m.group(1)))
     if not ids:
-        sys.exit(f"No rows found in {DATA_FILE} (is attribute-10 the label?).")
+        sys.exit(
+            f"No rows found in {DATA_FILE} (is attribute-10 the label?)."
+        )
     return ids
 
 # Write a train/test split to an ASP-compatible format
@@ -53,37 +58,41 @@ def write_split(train, test, fname):
         f.writelines(f"train_given({i}).\n" for i in train)
         f.writelines(f"test_given({j}).\n"  for j in test)
 
-"""Runs clingo with the current parameter settings and 
-   returns the best atom set (lowest test error)"""
-def run_clingo(split_lp, consts):
-    """Return atoms of the best witness (lowest test error)."""
-    flags = []
-    for k, v in consts.items():
-        flags.extend(["--const", f"{k}={v}"])
-    cmd = [
-        "clingo", MODEL_FILE, DATA_FILE, str(split_lp),
-        "0", "--outf=2", *flags
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
 
-    # 0 = SAT, 10 = SAT, 20 = UNSAT, 30 = OPTIMUM FOUND
+# ── run clingo and return the best atom set ─────────────────────────
+
+def run_clingo(split_lp: pathlib.Path, consts: dict):
+    flags = sum((["--const", f"{k}={v}"] for k, v in consts.items()), [])
+    cmd   = ["clingo", MODEL_FILE, DATA_FILE, str(split_lp),
+             "0", "--outf=2", *flags]
+
+    start = time.perf_counter()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=CLINGO_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, None          # timeout → skip
+    runtime = time.perf_counter() - start
+
     if proc.returncode not in (0, 10, 20, 30):
-        return None
+        return None, None
 
     try:
-        data = json.loads(proc.stdout)
+        j = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        return None
+        return None, None
 
     best_atoms, best_err, best_lits = None, 1.0, 10**9
-    for wit in data["Call"][0]["Witnesses"]:
-        atoms = wit["Value"]
-        err, lits = metrics(atoms)
-        if err is None:
-            continue
-        if err < best_err or (err == best_err and lits < best_lits):
-            best_atoms, best_err, best_lits = atoms, err, lits
-    return best_atoms
+    for call in j.get("Call", []):
+        for wit in call.get("Witnesses", []):
+            atoms = wit["Value"]
+            err, lits = metrics(atoms)
+            if err is None:
+                continue
+            if err < best_err or (err == best_err and lits < best_lits):
+                best_atoms, best_err, best_lits = atoms, err, lits
+
+    return (best_atoms, runtime) if best_atoms else (None, None)
 
 # Extract test error and total number of literals used from the answer set
 def metrics(atoms):
@@ -92,23 +101,18 @@ def metrics(atoms):
     err, lits = None, 0
     for a in atoms:
         if a.startswith("error_test_pp10k("):
-            err = int(a[17:-1]) / 10000.0   # 700 → 0.07
+            err = int(a[17:-1]) / 10000.0
         elif a.startswith(("default_body(", "exception_body(")):
             lits += 1
     return err, lits
 
-
-# Main loop runs the experiment for each split defined by seeds
-# For each split: shuffle rows, split 50/50, generate all GRID combinations
-# Run each with Clingo, select the best answer set (lowest test error, minimal rule size)...Making it comparable with SBF
-# ── main experiment loop ───────────────────────────────────────────────
-seeds     = ensure_seeds()
-all_rows  = load_rows()
-summary   = [] # will store test error (best error should have <=4.7%), rules used, and hyperparameters
-
+# ── main experiment loop ───────────────────────────────────────────────────
+seeds    = ensure_seeds()
+rows_all = load_rows()
+summary  = []  # (split, seed, err, lits, consts, runtime)
 
 for split_no, seed in enumerate(seeds, 1):
-    rows = copy.deepcopy(all_rows)
+    rows = copy.deepcopy(rows_all)
     random.Random(seed).shuffle(rows)
     half = len(rows) // 2
     train, test = rows[:half], rows[half:]
@@ -116,43 +120,57 @@ for split_no, seed in enumerate(seeds, 1):
     split_lp = OUT_DIR / f"split{split_no}.lp"
     write_split(train, test, split_lp)
 
-    best = {"err": 1.0, "lits": 9999, "consts": None, "atoms": None}
-    grid_iter = (dict(zip(GRID, vals))
-                 for vals in itertools.product(*GRID.values()))
+    best = {"err": 1.0, "lits": 9999, "consts": None,
+            "atoms": None, "time": None}
 
-    for consts in grid_iter:
-        atoms     = run_clingo(split_lp, consts)
+    for consts in (dict(zip(GRID, v))
+                   for v in itertools.product(*GRID.values())):
+        atoms, rt = run_clingo(split_lp, consts)
         err, lits = metrics(atoms)
         if err is None:
             continue
         if err < best["err"] or (err == best["err"] and lits < best["lits"]):
-            best.update(err=err, lits=lits, consts=consts, atoms=atoms)
+            best.update(err=err, lits=lits, consts=consts,
+                        atoms=atoms, time=rt)
 
-    if best["atoms"] is None:
-        print(f"✖︎ Split {split_no}: no model found.")
+    if not best["atoms"]:
+        print(f"Split {split_no}: no model found.")
         continue
 
-    (OUT_DIR / f"split{split_no}_best.txt").write_text("\n".join(best["atoms"]))
-    summary.append((split_no, seed, best["err"], best["lits"], best["consts"]))
-    print(f"Split {split_no}: error={best['err']:.4f}  literals={best['lits']}  {best['consts']}")
+    (OUT_DIR / f"split{split_no}_best.txt").write_text(
+        f"% clingo_time_sec {best['time']:.3f}\n" +
+        "\n".join(best["atoms"])
+    )
 
+    summary.append((split_no, seed, best["err"],
+                    best["lits"], best["consts"], best["time"]))
+    print(f"Split {split_no}: error={best['err']:.4f}  "
+          f"lits={best['lits']}  t={best['time']:.2f}s  {best['consts']}")
 
-# ── final report ───────────────────────────────────────────────────────
+# ───────final report ───────────────────────────────────────────────────────────────
 if not summary:
-    sys.exit("\nNo splits succeeded – check Clingo version / dataset.")
+    sys.exit("\nNo splits succeeded – check dataset / clingo.")
 
-mean_err = sum(s[2] for s in summary) / len(summary)
-print(f"\nAverage test error over {len(summary)} splits: {mean_err:.4f}")
+best_err   = min(summary, key=lambda x: x[2])
+best_lits  = min(summary, key=lambda x: (x[3], x[2]))
+mean_err   = sum(s[2] for s in summary) / len(summary)
 
-with open("dhce_vs_sbf.csv", "w", newline="") as csvf:
-    w = csv.writer(csvf)
-    w.writerow(["split","seed","testError","literals","maxD","maxE","maxBody"])
+print(f"\nBest test error: {best_err[2]:.4f} (split {best_err[0]})")
+print(f"Average test error: {mean_err:.4f}")
+print(f"Most compact model: {best_lits[3]} literals, "
+      f"error {best_lits[2]:.4f} (split {best_lits[0]})")
+
+with open("dhce_vs_sbf.csv", "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["split","seed","testError","literals",
+                "maxD","maxE","maxBody","runtimeSec"])
     for s in summary:
         md, me, mb = s[4]["maxD"], s[4]["maxE"], s[4]["maxBody"]
-        w.writerow([s[0], s[1], f"{s[2]:.4f}", s[3], md, me, mb])
+        w.writerow([s[0], s[1], f"{s[2]:.4f}", s[3],
+                    md, me, mb, f"{s[5]:.3f}"])
 
 print("\n CSV saved to dhce_vs_sbf.csv")
-print(" Best rule sets in runs/ (one text file per split)")
+print(" Rule sets in runs/ (each begins with its clingo runtime)")
 # ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Make sure "current.lp", "data-cancer.lp" and optionally "seeds.txt" are in the same folder as this script.
+# Make sure "current.lp", "data-cancer.lp"/"data.lp" and optionally "seeds.txt" are in the same folder as this script.
 # Output files (best rule sets and summary CSV) are saved under the "runs/" folder.

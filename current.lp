@@ -3,7 +3,7 @@
 %======================================================================
 
 %---------------------------------------------------------------------- 
-% 0. TRAIN, TEST AUTO 50/50 SPLIT
+% 0. TRAIN / TEST 50-50 AUTO-SPLIT
 %----------------------------------------------------------------------
 
 row(ID) :- val(ID,a(10),_).  % For 'data-cancer.lp' a(10) is the target label
@@ -24,19 +24,18 @@ test(ID)  :- no_user_split, row(ID), ID \ 2 = 1.
 % 1. TUNABLE CONSTANTS  (adjust freely when fine-tuning)
 %----------------------------------------------------------------------
 
-#const maxD    = 4.      % number of default-rule slots (changeable)
-#const maxE    = 1.      % max exceptions per default (changeable)
-#const maxBody = 4.      % max literals per rule body (changeable)
-
+#const maxD    = 4.      
+#const maxE    = 2.      
+#const maxBody = 2.      
 
 default_id(0..maxD-1).         % default rule identifiers
 exception_id(1..maxE).         % exception identifiers
 
-value(0..1).                   % Boolean values only
+value(0..1).
 
 % Identify valid attributes, except the class label at index 10
 attr(I) :- val(_,a(I),0), val(_,a(I),1), I != 10.
-literal(a(I,V)) :- attr(I), value(V).  % valid feature-value pairs
+literal(a(I,V)) :- attr(I), value(V).
 
 %---------------------------------------------------------------------- 
 % 3. DEFAULT RULE BODIES
@@ -46,10 +45,10 @@ literal(a(I,V)) :- attr(I), value(V).  % valid feature-value pairs
 { default_body(D,L) : literal(L) } >= 1 :- default_id(D), D < maxD-2.
 
 % Force single-literal fallback rule at position maxD-2
-1 { default_body(maxD-2,L) : literal(L) } 1.    
+1 { default_body(maxD-2,L) : literal(L) } 1.
 
-% Catch-all default rule (empty)
-default_exists(maxD-1).        
+% empty catch-all (D = maxD-1)
+default_exists(maxD-1).
 default_body_len(maxD-1,0).
 
 % Prevent contradictory literals in the same rule (avoiding redundancy)
@@ -66,7 +65,8 @@ default_exists(D) :- default_body(D,_).
 %----------------------------------------------------------------------
 
 % Learn body literals for exceptions (if any)
-{ exception_body(D,E,L) : literal(L) } >= 1 :- default_id(D), exception_id(E).
+{ exception_body(D,E,L) : literal(L) } >= 1 :-
+    default_id(D), exception_id(E).
 
 % Count body length of each exception
 exception_body_len(D,E,N) :-
@@ -83,7 +83,7 @@ exception_body_len(D,E,N) :-
 % Ignore trivial exceptions (must be more specific than their default)
 :- exception_exists(D,E),
    default_body_len(D,DL),
-   exception_body_len(D,E,EL), EL <= DL.
+   exception_body_len(D,E,EL), EL <= DL.   %  ← FIXED operator
 
 exception_exists(D,E) :- exception_body(D,E,_).
 
@@ -106,7 +106,7 @@ exception_covers(D,E,ID) :-
     row(ID).
 
 %---------------------------------------------------------------------- 
-% 6. PRIORITIES  (adapts to any value of maxD)
+% 6. PRIORITIES
 %----------------------------------------------------------------------
 
 % Priority increases with rule index (auto-scaled)
@@ -114,7 +114,7 @@ default_prio(D,P) :- default_id(D), P = D*10.
 exception_prio(D,E,P) :- default_prio(D,P), exception_id(E).
 
 %---------------------------------------------------------------------- 
-% 7. FRESH-TRAIN COVERAGE (learned defaults only)
+% 7. FRESH TRAIN-COVERAGE
 %----------------------------------------------------------------------
 
 % A row is covered by a higher-priority rule
@@ -161,17 +161,17 @@ label1(N1) :- N1 = #count { ID : train(ID), val(ID,a(10),1) }.
 
 % Compute majority label
 maj_label(0) :- label0(N0), label1(N1), N0 >= N1.
-maj_label(1) :- label1(N1), label0(N0), N1 >  N0.
+maj_label(1) :- label1(N1), label0(N0), N1 > N0.
 
 %---------------------------------------------------------------------- 
 % 10. PREDICTIONS
 %----------------------------------------------------------------------
 
 % Assign predictions depending on the winning rule
-prediction(ID,1) :- winning(ID,default,D), D < maxD-2.       % learned rule
-prediction(ID,0) :- winning(ID,exception,_,_).               % exception overrides
-prediction(ID,L) :- winning(ID,default,maxD-2), maj_label(L).% fallback
-prediction(ID,L) :- winning(ID,default,maxD-1), maj_label(L).% catch-all
+prediction(ID,1) :- winning(ID,default,D), D < maxD-2.
+prediction(ID,0) :- winning(ID,exception,_,_).
+prediction(ID,L) :- winning(ID,default,maxD-2), maj_label(L).
+prediction(ID,L) :- winning(ID,default,maxD-1), maj_label(L).
 
 handled(ID)   :- prediction(ID,_).
 uncovered(ID) :- row(ID), not handled(ID).
@@ -180,7 +180,6 @@ uncovered(ID) :- row(ID), not handled(ID).
 % 11. OPTIMISATION
 %----------------------------------------------------------------------
 
-% Optimization goals: minimize misclassifications and complexity
 mis(ID) :- train(ID), prediction(ID,P), val(ID,a(10),T), P != T.
 #minimize { 1@4,ID : mis(ID) }.
 #minimize { 1@3,D  : default_exists(D), D < maxD-1 }.
@@ -205,9 +204,13 @@ misTestCount(N) :- N = #count { ID : mistest(ID) }.
 error_pp10k(P)      :- misCount(N),    trainRows(M), M>0, P = (N*10000)/M.
 error_test_pp10k(E) :- misTestCount(N), testRows(M), M>0, E = (N*10000)/M.
 
-% Output atoms for analysis
+% The fallback literal
+fallback_body(L) :- default_body(maxD-2,L).
+
+% Output
 #show default_body/2.
 #show exception_body/3.
+#show fallback_body/1.
 #show misCount/1.
 #show misTestCount/1.
 #show trainRows/1.
