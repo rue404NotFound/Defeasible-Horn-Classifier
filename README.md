@@ -44,7 +44,7 @@ After running the Python script:
 - Console will show best error per split and average test error
 
 ## Requirements:
-- Install dependencies by running: 'pip install -r requirements.txt'
+- See requirements.txt'
 
 
 
